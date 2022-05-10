@@ -44,7 +44,7 @@ from .const import ALL_DOMAIN_EXCLUDE_ATTRS, JSON_DUMP
 # pylint: disable=invalid-name
 Base = declarative_base()
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -474,7 +474,7 @@ class StatisticsMeta(Base):  # type: ignore[misc,valid-type]
     )
     __tablename__ = TABLE_STATISTICS_META
     id = Column(Integer, Identity(), primary_key=True)
-    statistic_id = Column(String(255), index=True)
+    statistic_id = Column(String(255), index=True, unique=True)
     source = Column(String(32))
     unit_of_measurement = Column(String(255))
     has_mean = Column(Boolean)
