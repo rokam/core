@@ -136,15 +136,7 @@ class EntityPlatform:
 
         self.parallel_updates_created = True
 
-        parallel_updates = getattr(self.platform, "PARALLEL_UPDATES", None)
-
-        if parallel_updates is None and not entity_has_async_update:
-            parallel_updates = 1
-
-        if parallel_updates == 0:
-            parallel_updates = None
-
-        if parallel_updates is not None:
+        if parallel_updates := getattr(self.platform, "PARALLEL_UPDATES", None):
             self.parallel_updates = asyncio.Semaphore(parallel_updates)
 
         return self.parallel_updates

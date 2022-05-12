@@ -307,7 +307,7 @@ async def test_parallel_updates_async_platform_with_constant(hass):
 
 
 async def test_parallel_updates_sync_platform(hass):
-    """Test sync platform parallel_updates default set to 1."""
+    """Test sync platform parallel_updates default set to 0."""
     platform = MockPlatform()
 
     mock_entity_platform(hass, "test_domain.platform", platform)
@@ -328,8 +328,7 @@ async def test_parallel_updates_sync_platform(hass):
 
     entity = SyncEntity()
     await handle.async_add_entities([entity])
-    assert entity.parallel_updates is not None
-    assert entity.parallel_updates._value == 1
+    assert entity.parallel_updates is None
 
 
 async def test_parallel_updates_sync_platform_with_constant(hass):
