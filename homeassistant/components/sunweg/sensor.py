@@ -1,23 +1,24 @@
 """Read status of SunWEG inverters."""
 from __future__ import annotations
 
+import datetime
 import logging
 from types import MappingProxyType
 from typing import Any
 
-from sunweg.api import APIHelper
 from sunweg.device import Inverter
 from sunweg.plant import Plant
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import StateType
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import SunWEGData
-from .const import CONF_PLANT_ID, DEFAULT_PLANT_ID, DOMAIN, DeviceType
+from . import SunWEGDataUpdateCoordinator
+from .const import DOMAIN, DeviceType
 from .sensor_types.inverter import INVERTER_SENSOR_TYPES
 from .sensor_types.phase import PHASE_SENSOR_TYPES
 from .sensor_types.sensor_entity_description import SunWEGSensorEntityDescription
@@ -27,22 +28,13 @@ from .sensor_types.total import TOTAL_SENSOR_TYPES
 _LOGGER = logging.getLogger(__name__)
 
 
-def get_device_list(
-    api: APIHelper, config: MappingProxyType[str, Any]
-) -> tuple[list[Inverter], int]:
+def get_device_list(plant: Plant, config: MappingProxyType[str, Any]) -> list[Inverter]:
     """Retrieve the device list for the selected plant."""
-    plant_id = int(config[CONF_PLANT_ID])
-
-    if plant_id == DEFAULT_PLANT_ID:
-        plant_info: list[Plant] = api.listPlants()
-        plant_id = plant_info[0].id
-
     devices: list[Inverter] = []
     # Get a list of devices for specified plant to add sensors for.
-    for inverter in api.plant(plant_id).inverters:
-        api.complete_inverter(inverter)
+    for inverter in plant.inverters:
         devices.append(inverter)
-    return (devices, plant_id)
+    return devices
 
 
 async def async_setup_entry(
@@ -53,17 +45,18 @@ async def async_setup_entry(
     """Set up the SunWEG sensor."""
     name = config_entry.data[CONF_NAME]
 
-    probe: SunWEGData = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator: SunWEGDataUpdateCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    await coordinator.async_config_entry_first_refresh()
 
-    devices, plant_id = await hass.async_add_executor_job(
-        get_device_list, probe.api, config_entry.data
+    devices = await hass.async_add_executor_job(
+        get_device_list, coordinator.data, config_entry.data
     )
 
     entities = [
         SunWEGInverter(
-            probe,
+            coordinator=coordinator,
             name=f"{name} Total",
-            unique_id=f"{plant_id}-{description.key}",
+            unique_id=f"{coordinator.plant_id}-{description.key}",
             description=description,
             device_type=DeviceType.TOTAL,
         )
@@ -74,7 +67,7 @@ async def async_setup_entry(
     entities.extend(
         [
             SunWEGInverter(
-                probe,
+                coordinator=coordinator,
                 name=f"{device.name}",
                 unique_id=f"{device.sn}-{description.key}",
                 description=description,
@@ -89,7 +82,7 @@ async def async_setup_entry(
     entities.extend(
         [
             SunWEGInverter(
-                probe,
+                coordinator=coordinator,
                 name=f"{device.name} {phase.name}",
                 unique_id=f"{device.sn}-{phase.name}-{description.key}",
                 description=description,
@@ -106,7 +99,7 @@ async def async_setup_entry(
     entities.extend(
         [
             SunWEGInverter(
-                probe,
+                coordinator=coordinator,
                 name=f"{device.name} {string.name}",
                 unique_id=f"{device.sn}-{string.name}-{description.key}",
                 description=description,
@@ -124,23 +117,23 @@ async def async_setup_entry(
     async_add_entities(entities, True)
 
 
-class SunWEGInverter(SensorEntity):
+class SunWEGInverter(CoordinatorEntity[SunWEGDataUpdateCoordinator], SensorEntity):
     """Representation of a SunWEG Sensor."""
 
     entity_description: SunWEGSensorEntityDescription
 
     def __init__(
         self,
-        probe: SunWEGData,
         name: str,
         unique_id: str,
+        coordinator: SunWEGDataUpdateCoordinator,
         description: SunWEGSensorEntityDescription,
         device_type: DeviceType,
         inverter_id: int = 0,
         deep_name: str | None = None,
     ) -> None:
         """Initialize a sensor."""
-        self.probe = probe
+        super().__init__(coordinator)
         self.entity_description = description
         self.device_type = device_type
         self.inverter_id = inverter_id
@@ -152,26 +145,40 @@ class SunWEGInverter(SensorEntity):
             description.icon if description.icon is not None else "mdi:solar-power"
         )
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, str(probe.plant_id))},
-            manufacturer="SunWEG",
-            name=name,
+        self._attr_device_info = coordinator.device_info
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle data update."""
+        previous_value = self.native_value
+        value: StateType | datetime.datetime = self.coordinator.get_api_value(
+            self.entity_description.api_variable_key,
+            self.device_type,
+            self.inverter_id,
+            self.deep_name,
+        )
+        previous_unit_of_measurement: str | None = self.native_unit_of_measurement
+        unit_of_measurement: str | None = str(
+            self.coordinator.get_api_value(
+                self.entity_description.api_variable_unit,
+                self.device_type,
+                self.inverter_id,
+                self.deep_name,
+            )
+            if self.entity_description.api_variable_unit is not None
+            else self.native_unit_of_measurement
         )
 
-    def update(self) -> None:
-        """Get the latest data from the Sun WEG API and updates the state."""
-        self.probe.update()
-        (
-            self._attr_native_value,
-            self._attr_native_unit_of_measurement,
-        ) = self.probe.get_data(
-            api_variable_key=self.entity_description.api_variable_key,
-            api_variable_unit=self.entity_description.api_variable_unit,
-            deep_name=self.deep_name,
-            device_type=self.device_type,
-            inverter_id=self.inverter_id,
-            name=self.entity_description.name,
-            native_unit_of_measurement=self.native_unit_of_measurement,
-            never_resets=self.entity_description.never_resets,
-            previous_value_drop_threshold=self.entity_description.previous_value_drop_threshold,
-        )
+        # Never resets validation
+        if (
+            self.entity_description.never_resets
+            and isinstance(value, float)
+            and isinstance(previous_value, float)
+            and (value is None or value == 0)
+        ):
+            value = previous_value
+            unit_of_measurement = previous_unit_of_measurement
+
+        self._attr_native_value = value
+        self._attr_native_unit_of_measurement = unit_of_measurement
+        self.async_write_ha_state()

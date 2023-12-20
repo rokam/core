@@ -60,7 +60,7 @@ def plant_fixture(inverter_fixture) -> Plant:
         0.5,
         0,
         12.786912,
-        24.0,
+        None,
         "kWh",
         332.2,
         0.012296,
