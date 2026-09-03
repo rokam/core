@@ -2045,6 +2045,9 @@ async def _assert_reconfigure_success(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reconfigure"
 
+    discovery_result = DISCOVERY_RESULT
+    discovery_result[TEST_DEVICE_ID][CONF_IP_ADDRESS] = "8.8.8.8"
+
     with (
         patch(
             "homeassistant.components.midea.config_flow.discover",
@@ -2071,6 +2074,18 @@ async def _assert_reconfigure_success(
         assert config_entry.data[CONF_IP_ADDRESS] == "8.8.8.8"
 
         assert len(hass.config_entries.async_entries()) == 1
+
+
+async def test_reconfigure_flow_success(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+) -> None:
+    """Test reconfigure flow with success in the new IP."""
+    config_entry.add_to_hass(hass)
+    result = await config_entry.start_reconfigure_flow(hass)
+    await _assert_reconfigure_success(
+        hass=hass, config_entry=config_entry, result=result
+    )
 
 
 async def test_reconfigure_flow_no_discovery(
